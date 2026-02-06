@@ -8,7 +8,7 @@
 
 const CONFIG = {
   ACTIVE_ENDPOINT: "https://cc-rep-info.careermedia.workers.dev/active",
-  POLL_INTERVAL_MS: 1000,
+  POLL_INTERVAL_MS: 250,
 
   // GitHub-side auto timeout back to idle:
   ACTIVE_TIMEOUT_MS: 120000, // 2 minutes
