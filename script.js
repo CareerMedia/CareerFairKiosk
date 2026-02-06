@@ -1,19 +1,20 @@
 /**
- * IFRAME-ONLY kiosk logic:
- * - Polls Cloudflare Worker /active
- * - If active:false => idle background
- * - If active:true => load formUrl into iframe full-screen
- * - Local timeout returns to idle after ACTIVE_TIMEOUT_MS
+ * IFRAME-ONLY kiosk logic (optimized):
+ * - Adaptive polling (slow idle, fast active)
+ * - Keeps iframe warm (no destroy/recreate)
+ * - Pauses polling when tab is hidden
  */
 
 const CONFIG = {
   ACTIVE_ENDPOINT: "https://cc-rep-info.careermedia.workers.dev/active",
-  POLL_INTERVAL_MS: 250,
+
+  // Adaptive polling
+  IDLE_POLL_MS: 3000,    // 3s when idle
+  ACTIVE_POLL_MS: 500,   // fast when active
 
   // GitHub-side auto timeout back to idle:
   ACTIVE_TIMEOUT_MS: 120000, // 2 minutes
 
-  // Optional debug badge in bottom-right
   SHOW_DEBUG_BADGE: true,
 };
 
@@ -29,6 +30,9 @@ let state = {
   lastItemId: null,
   lastFormUrl: null,
   activeTimer: null,
+  pollTimer: null,
+  currentPollMs: CONFIG.IDLE_POLL_MS,
+  isActive: false,
 };
 
 function show(el) { el.classList.remove("hidden"); }
@@ -40,6 +44,17 @@ function setBadge(text) {
   show(els.badge);
 }
 
+function startPolling(interval) {
+  if (state.pollTimer) clearInterval(state.pollTimer);
+  state.currentPollMs = interval;
+  state.pollTimer = setInterval(pollOnce, interval);
+}
+
+function stopPolling() {
+  if (state.pollTimer) clearInterval(state.pollTimer);
+  state.pollTimer = null;
+}
+
 function resetActiveTimer() {
   if (state.activeTimer) clearTimeout(state.activeTimer);
   state.activeTimer = setTimeout(() => {
@@ -48,13 +63,16 @@ function resetActiveTimer() {
 }
 
 function showIdle() {
-  if (state.activeTimer) clearTimeout(state.activeTimer);
-  state.activeTimer = null;
+  if (!state.isActive && !els.idle.classList.contains("hidden")) return;
 
+  state.isActive = false;
   state.lastItemId = null;
   state.lastFormUrl = null;
 
-  els.frame.removeAttribute("src");
+  if (state.activeTimer) clearTimeout(state.activeTimer);
+  state.activeTimer = null;
+
+  // Do NOT destroy iframe — just hide it (keeps it warm)
   hide(els.frame);
   hide(els.loading);
 
@@ -62,34 +80,40 @@ function showIdle() {
   hide(els.active);
 
   setBadge("Idle");
+  startPolling(CONFIG.IDLE_POLL_MS);
 }
 
 function showActive(formUrl, itemId) {
-  // Prevent flicker / reload if same form is already displayed
-  if (state.lastItemId === itemId && state.lastFormUrl === formUrl) {
+  // If same form already showing, just keep timers alive
+  if (state.isActive && state.lastItemId === itemId && state.lastFormUrl === formUrl) {
     resetActiveTimer();
     return;
   }
 
+  state.isActive = true;
   state.lastItemId = itemId;
   state.lastFormUrl = formUrl;
 
   hide(els.idle);
   show(els.active);
 
-  // Show loading until iframe fires onload
   show(els.loading);
 
   els.frame.onload = () => {
     hide(els.loading);
-    setBadge(`Active • item ${itemId}`);
+    setBadge(`Active • ${itemId}`);
   };
 
-  els.frame.src = formUrl;
+  // Only update src if it changed
+  if (els.frame.src !== formUrl) {
+    els.frame.src = formUrl;
+  }
+
   show(els.frame);
 
   resetActiveTimer();
-  setBadge(`Active (loading) • item ${itemId}`);
+  startPolling(CONFIG.ACTIVE_POLL_MS);
+  setBadge(`Active (loading) • ${itemId}`);
 }
 
 async function fetchActive() {
@@ -111,9 +135,9 @@ async function pollOnce() {
     const formUrl = data.formUrl;
 
     if (!formUrl) {
-      // Safe default: idle if we can’t load a form
+      // If active but no formUrl yet, stay idle visually
       showIdle();
-      setBadge(`Idle (no formUrl) • item ${itemId}`);
+      setBadge(`Idle (waiting for form) • ${itemId}`);
       return;
     }
 
@@ -125,7 +149,16 @@ async function pollOnce() {
   }
 }
 
+// Pause polling when tab is hidden (saves requests)
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    stopPolling();
+  } else {
+    startPolling(state.isActive ? CONFIG.ACTIVE_POLL_MS : CONFIG.IDLE_POLL_MS);
+  }
+});
+
 // Start
 showIdle();
-setInterval(pollOnce, CONFIG.POLL_INTERVAL_MS);
+startPolling(CONFIG.IDLE_POLL_MS);
 pollOnce();
