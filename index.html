@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kiosk</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <!-- IDLE SCREEN -->
+  <main id="idle" class="screen screen--idle" aria-label="Idle screen">
+    <!-- Optional overlay content (leave empty if you want only the image) -->
+    <!-- <div class="idle-overlay">Ready</div> -->
+  </main>
+
+  <!-- ACTIVE SCREEN -->
+  <main id="active" class="screen screen--active hidden" aria-label="Active screen">
+    <!-- Shown briefly while switching/loading -->
+    <div id="loading" class="loading hidden" role="status" aria-live="polite">
+      Loading…
+    </div>
+
+    <!-- Iframe container -->
+    <iframe
+      id="formFrame"
+      class="form-frame hidden"
+      title="Representative Information Form"
+      referrerpolicy="no-referrer"
+      allow="clipboard-read; clipboard-write"
+    ></iframe>
+
+    <!-- Redirect mode (if iframe is blocked) -->
+    <div id="redirectMode" class="redirect-mode hidden">
+      <p>Opening form…</p>
+      <p>If it doesn’t open automatically, tap below.</p>
+      <a id="openFormLink" class="btn" href="#" target="_self" rel="noopener">Open Form</a>
+    </div>
+
+    <!-- Optional tiny status badge (helpful during setup) -->
+    <div id="badge" class="badge hidden"></div>
+  </main>
+
+  <script src="./script.js"></script>
+</body>
+</html>
