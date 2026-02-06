@@ -23,7 +23,7 @@ body {
 
 /* IDLE: background image covers entire screen */
 .screen--idle {
-  background-image: url("./assets/idle.jpg"); /* <-- put your image here */
+  background-image: url("./assets/idle.jpeg"); /* <-- put your image here */
   background-size: cover;
   background-position: center center; /* center center */
   background-repeat: no-repeat;
