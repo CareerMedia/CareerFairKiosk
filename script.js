@@ -1,20 +1,18 @@
 /**
- * IFRAME-ONLY kiosk logic (optimized):
- * - Adaptive polling (slow idle, fast active)
- * - Keeps iframe warm (no destroy/recreate)
- * - Pauses polling when tab is hidden
+ * RE-OPTIMIZED Kiosk Logic
+ * - Faster Idle Polling (1s)
+ * - Immediate "Fast Mode" when Monday.com triggers
+ * - Cache-busting requests
  */
 
 const CONFIG = {
   ACTIVE_ENDPOINT: "https://cc-rep-info.careermedia.workers.dev/active",
 
-  // Adaptive polling
-  IDLE_POLL_MS: 3000,    // 3s when idle
-  ACTIVE_POLL_MS: 500,   // fast when active
+  // Faster polling for better responsiveness
+  IDLE_POLL_MS: 1000,    // 1s check (Standard for kiosks)
+  ACTIVE_POLL_MS: 500,   // 0.5s check (When we know an update is coming)
 
-  // GitHub-side auto timeout back to idle:
-  ACTIVE_TIMEOUT_MS: 120000, // 2 minutes
-
+  ACTIVE_TIMEOUT_MS: 120000, 
   SHOW_DEBUG_BADGE: true,
 };
 
@@ -63,93 +61,82 @@ function resetActiveTimer() {
 }
 
 function showIdle() {
-  if (!state.isActive && !els.idle.classList.contains("hidden")) return;
-
-  state.isActive = false;
-  state.lastItemId = null;
-  state.lastFormUrl = null;
-
-  if (state.activeTimer) clearTimeout(state.activeTimer);
-  state.activeTimer = null;
-
-  // Do NOT destroy iframe — just hide it (keeps it warm)
-  hide(els.frame);
-  hide(els.loading);
-
-  show(els.idle);
-  hide(els.active);
-
-  setBadge("Idle");
-  startPolling(CONFIG.IDLE_POLL_MS);
+  // Only update UI if we are actually changing states
+  if (state.isActive) {
+    state.isActive = false;
+    state.lastItemId = null;
+    state.lastFormUrl = null;
+    if (state.activeTimer) clearTimeout(state.activeTimer);
+    hide(els.frame);
+    hide(els.loading);
+    show(els.idle);
+    hide(els.active);
+    startPolling(CONFIG.IDLE_POLL_MS);
+  }
+  setBadge("Idle (Waiting for Monday.com)");
 }
 
 function showActive(formUrl, itemId) {
-  // If same form already showing, just keep timers alive
-  if (state.isActive && state.lastItemId === itemId && state.lastFormUrl === formUrl) {
-    resetActiveTimer();
-    return;
-  }
-
   state.isActive = true;
-  state.lastItemId = itemId;
-  state.lastFormUrl = formUrl;
-
-  hide(els.idle);
-  show(els.active);
-
-  show(els.loading);
-
-  els.frame.onload = () => {
-    hide(els.loading);
-    setBadge(`Active • ${itemId}`);
-  };
-
-  // Only update src if it changed
-  if (els.frame.src !== formUrl) {
-    els.frame.src = formUrl;
+  
+  // If we have the URL, show the frame
+  if (formUrl) {
+    if (state.lastFormUrl !== formUrl) {
+      state.lastFormUrl = formUrl;
+      state.lastItemId = itemId;
+      hide(els.idle);
+      show(els.active);
+      show(els.loading);
+      
+      els.frame.onload = () => {
+        hide(els.loading);
+        setBadge(`Active • ${itemId}`);
+      };
+      
+      if (els.frame.src !== formUrl) {
+        els.frame.src = formUrl;
+      }
+      show(els.frame);
+    }
+  } else {
+    // We are ACTIVE but waiting for the URL (the "loading" phase)
+    hide(els.idle);
+    show(els.active);
+    show(els.loading);
+    setBadge(`Triggered! Fetching URL... • ${itemId}`);
   }
-
-  show(els.frame);
 
   resetActiveTimer();
-  startPolling(CONFIG.ACTIVE_POLL_MS);
-  setBadge(`Active (loading) • ${itemId}`);
-}
-
-async function fetchActive() {
-  const res = await fetch(CONFIG.ACTIVE_ENDPOINT, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Active endpoint HTTP ${res.status}`);
-  return res.json();
+  // Switch to FAST polling because the data is changing
+  if (state.currentPollMs !== CONFIG.ACTIVE_POLL_MS) {
+    startPolling(CONFIG.ACTIVE_POLL_MS);
+  }
 }
 
 async function pollOnce() {
   try {
-    const data = await fetchActive();
+    // Add timestamp to URL to bypass ANY browser/ISP caching
+    const cacheBuster = `?t=${Date.now()}`;
+    const res = await fetch(CONFIG.ACTIVE_ENDPOINT + cacheBuster, { 
+      cache: "no-store",
+      headers: { 'Pragma': 'no-cache', 'Cache-Control': 'no-cache' }
+    });
+    
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
 
-    if (!data || data.active !== true) {
+    // If active property is true (even if formUrl is still null)
+    if (data && data.active === true) {
+      showActive(data.formUrl, data.itemId);
+    } else {
       showIdle();
-      return;
     }
-
-    const itemId = data.itemId || "unknown";
-    const formUrl = data.formUrl;
-
-    if (!formUrl) {
-      // If active but no formUrl yet, stay idle visually
-      showIdle();
-      setBadge(`Idle (waiting for form) • ${itemId}`);
-      return;
-    }
-
-    showActive(formUrl, itemId);
   } catch (err) {
-    showIdle();
-    setBadge("Idle (fetch error)");
+    setBadge("Connection Error - Retrying...");
     console.error(err);
   }
 }
 
-// Pause polling when tab is hidden (saves requests)
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     stopPolling();
@@ -158,7 +145,7 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-// Start
+// Init
+state.isActive = true; // Set true initially so showIdle runs once correctly
 showIdle();
-startPolling(CONFIG.IDLE_POLL_MS);
 pollOnce();
